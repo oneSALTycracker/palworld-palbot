@@ -1,15 +1,30 @@
 import asyncio
 import json
 import os
+import logging
+import nextcord
 from nextcord.ext import commands
 from util.gamercon_async import GameRCON
+from nextcord import Game
 
 class ConnectCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.servers = self.load_config()
         self.last_seen_players = {}
+
+    @commands.Cog.listener()
+    async def on_ready(self):
         self.bot.loop.create_task(self.monitor_player_joins())
+
+    async def test_rcon_connection(self, server_name):
+        server_info = self.servers.get(server_name)
+        if server_info:
+            try:
+                response = await self.run_command(server_info)
+                logging.info(f"Test RCON Response: {response}")
+            except Exception as e:
+                logging.error(f"Error during RCON test: {e}")
 
     def load_config(self):
         config_path = os.path.join('data', 'config.json')
@@ -23,15 +38,19 @@ class ConnectCog(commands.Cog):
                 response = await asyncio.wait_for(pc.send("ShowPlayers"), timeout=10.0)
                 return response
         except Exception as e:
-            print(f"Error executing ShowPlayers command: {e}")
+            logging.error(f"Error executing ShowPlayers command: {e}")
             return None
 
     async def monitor_player_joins(self):
         while True:
+            total_players = 0
             for server_name, server_info in self.servers.items():
                 current_players = await self.run_command(server_info)
                 if current_players:
-                    await self.announce_new_players(server_name, current_players)
+                    player_lines = current_players.strip().split('\n')
+                    total_players += len(player_lines) - 1
+            game_status = Game(f"Players Online: {total_players}")
+            await self.bot.change_presence(status=nextcord.Status.online, activity=game_status)
             await asyncio.sleep(18)
 
     async def announce_new_players(self, server_name, current_players):
@@ -43,7 +62,6 @@ class ConnectCog(commands.Cog):
 
         self.last_seen_players[server_name] = new_players
 
-    # Pain in my ass
     def extract_players(self, player_data):
         players = set()
         lines = player_data.split('\n')[1:]
@@ -60,9 +78,8 @@ class ConnectCog(commands.Cog):
         if "CONNECTION_CHANNEL" in self.servers[server_name]:
             announcement_channel_id = self.servers[server_name]["CONNECTION_CHANNEL"]
             channel = self.bot.get_channel(announcement_channel_id)
-            # This message needs to be formatted better.
             if channel:
-                await channel.send(f"`Player joined on {server_name}: {name} (SteamID: {steamid})`")
+                await channel.send(f"Player joined on {server_name}: {name} (SteamID: {steamid})")
 
 def setup(bot):
     bot.add_cog(ConnectCog(bot))
